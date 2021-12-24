@@ -1,7 +1,7 @@
 import { load } from 'cheerio';
 import fetch from 'node-fetch';
 import { LINKS } from "./constants.js"
-
+import fs from 'fs'
 export class Scrapper {
     constructor() {
         this.questions = {};
@@ -13,8 +13,8 @@ export class Scrapper {
         try {
             console.log("INITIALIZING SCRAPPER");
             this.totalPages = await this.fetchTotalPages();
-            let currPage = 1
-            while (currPage <= 1) {
+            let currPage = 100
+            while (currPage <= 102) {
                 await this.getHomePageQuestionsDetails(`${LINKS.SO_QUESTION}/?page=${currPage}`);
                 await this.sleep(1000)
                 currPage++;
@@ -32,42 +32,34 @@ export class Scrapper {
             const html = $.html();
             const questionElements = $(html).find('#mainbar > #questions > .question-summary');
 
-            const ele = questionElements[p];
+            for (let p = 0; p < questionElements.length; p++) {
+                const ele = questionElements[p];
 
-            const q = this.getHomeQuestionDetail($, ele);
+                const q = this.getHomeQuestionDetail($, ele);
 
-            let currentPromises = [];
-            for (let i = 0; i < questionElements.length; i = i + LINKS.MAX_REQ) {
-                for (let j = i; j < i + LINKS.MAX_REQ; j++) {
-                    if (j >= related.length) {
-                        break;
+                if (!(q.questionLink in this.questions)) {
+                    this.questions[q.questionLink] = q
+                    // fetch next 5 questions
+                    const { $, html } = await this.getQuestionPageHTML(q.questionLink);
+                    const related = this.getRelatedLink($, html);
+                    console.log("related: ", related.length);
+                    let currentPromises = [];
+                    for (let i = 0; i < related.length; i = i + LINKS.MAX_REQ) {
+                        for (let j = i; j < i + LINKS.MAX_REQ; j++) {
+                            if (j >= related.length) {
+                                break;
+                            }
+                            currentPromises.push(this.getQuestionDetailsFromQPage(related[j]));
+                        }
+                        await Promise.allSettled(currentPromises);
+                        await this.sleep(1000)
+                        currentPromises = [];
                     }
-                    currentPromises.push(this.getHomeQuestionDetail(questionElements[j]));
+                } else {
+                    // getting question details from questions home page
+                    this.questions[q.questionLink] = { ...q, count: this.questions[q.questionLink].count }
                 }
-                await Promise.allSettled(currentPromises);
-                await this.sleep(2000)
-                currentPromises = [];
             }
-
-            // if (!(q.questionLink in this.questions)) {
-            //     this.questions[q.questionLink] = q
-            //     // fetch next 5 questions
-            //     const { $, html } = await this.getQuestionPageHTML(q.questionLink);
-            //     const related = this.getRelatedLink($, html);
-            //     console.log("related: ", related.length);
-            //     let currentPromises = [];
-            //     for (let i = 0; i < related.length; i = i + LINKS.MAX_REQ) {
-            //         for (let j = i; j < i + LINKS.MAX_REQ; j++) {
-            //             if (j >= related.length) {
-            //                 break;
-            //             }
-            //             currentPromises.push(this.getQuestionDetailsFromQPage(related[j]));
-            //         }
-            //         await Promise.allSettled(currentPromises);
-            //         await this.sleep(2000)
-            //         currentPromises = [];
-            //     }
-            // }
 
         } catch (error) {
             console.error("Err: ", error);
@@ -84,7 +76,8 @@ export class Scrapper {
                 title,
                 questionLink,
                 answerCount,
-                upvotes
+                upvotes,
+                count: 1
             }
         } catch (error) {
             console.error("Err: ", error);
@@ -107,9 +100,13 @@ export class Scrapper {
             if (!(link in this.questions)) {
                 this.questions[link] = {
                     questionLink: link,
-                    answerCount: $(html).find('#answers-header > div > div.flex--item.fl1 > h2').attr('data-answercount'),
-                    upvotes: $(html).find('#question > div.post-layout > div.votecell.post-layout--left > div > div.js-vote-count.flex--item.d-flex.fd-column.ai-center.fc-black-500.fs-title').attr('data-value')
+                    title: "will be fetcghed from questions page",
+                    answerCount: $(html).find('#answers-header > div > div.flex--item.fl1 > h2').attr('data-answercount') ?? 'Will be fetched later',
+                    upvotes: $(html).find('#question > div.post-layout > div.votecell.post-layout--left > div > div.js-vote-count.flex--item.d-flex.fd-column.ai-center.fc-black-500.fs-title').attr('data-value') ?? 'Will be fetched later',
+                    count: 1
                 }
+            } else {
+                this.questions[link].count = this.questions[link].count + 1;
             }
             // to avoid 
             await this.sleep(100)
@@ -162,5 +159,13 @@ export class Scrapper {
 
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    dumpToCSV() {
+        let data = 'Question,Answer Count,Upvotes,Count\n';
+        for (let ques in this.questions) {
+            data += `${this.questions[ques].title?.replace(',', ' ')},${this.questions[ques].answerCount},${this.questions[ques].upvotes},${this.questions[ques].count}\n`;
+        }
+        fs.writeFileSync(`./data.csv`, data, "utf-8");
     }
 }
